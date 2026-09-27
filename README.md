@@ -31,17 +31,28 @@ comment that grows past one line moves above its code line. An empty body delete
 Every save is re-parsed and refused if the text would not read back as the same comment (e.g.
 `*/` inside a block comment or `"""` inside a docstring).
 
+In the list:
+
 | Key | Action |
 | --- | --- |
 | `j` / `k`, arrows | move |
 | `enter` | edit the selected comment |
-| `ctrl+s` | save the edit to the file |
-| `esc` | discard the edit |
 | `r` | revert the comment to its original text |
 | `x` | mark as skipped / pending |
 | `f` | cycle the status filter |
 | `c` | commit the edits made so far |
 | `q` | quit (asks if edits are uncommitted) |
+
+The editor is vim-style and opens in normal mode; the bottom border shows the mode and the `:`
+command being typed.
+
+- Motions: `h j k l`, `w b e`, `0 ^ $`, `gg G`, with counts (`3w`, `2dd`, `5G`).
+- Insert: `i a I A o O`; `esc` returns to normal mode.
+- Edits: `x`, `dd`, `dw`, `de`, `D`, `cw`, `cc`, `C`, `yy`, `yw`, `p`, `P`, and operators with any
+  motion above; `u` undo, `ctrl+r` redo.
+- `:w` saves into the file, `:wq` / `:x` save and go back to the list, `:q` goes back (refused with
+  unsaved changes), `:q!` discards them. `esc` in normal mode also goes back when nothing is unsaved.
+- `ctrl+s` saves from any mode.
 
 ## Committing part-way
 
