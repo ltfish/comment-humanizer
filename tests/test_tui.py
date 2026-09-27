@@ -197,3 +197,48 @@ def test_quit_confirms_when_dirty(repo):
 
     run(app, scenario)
     assert app.return_code == 0
+
+
+def _preview_app(repo, comment_at):
+    code = [f"x{i} = {i}  # " + "long " * 40 for i in range(200)]
+    comment = [f"# comment line {i}" for i in range(20)]
+    lines = code[:comment_at] + comment + code[comment_at:]
+    repo.commit("base", **{"a.py": "\n".join(code) + "\n"})
+    repo.git("checkout", "-q", "-b", "feature")
+    repo.commit("feat", **{"a.py": "\n".join(lines) + "\n"})
+    root = str(repo.root)
+    return HumanizerApp(Session(root, resolve_base(root)))
+
+
+def test_preview_fills_panel_and_centres_comment(repo):
+    app = _preview_app(repo, 100)  # comment on lines 101-120 of 220
+
+    async def main():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            height = app.query_one("#context").scrollable_content_region.height
+            lo, hi = app.context_range
+            assert hi - lo + 1 == height > 20
+            # long lines are clipped, not wrapped, so every line takes one row
+            assert app.query_one("#context-text").size.height == height
+            assert abs((101 - lo) - (hi - 120)) <= 1  # centred
+            await pilot.resize_terminal(120, 70)
+            await pilot.pause()
+            taller = app.query_one("#context").scrollable_content_region.height
+            lo, hi = app.context_range
+            assert taller > height and hi - lo + 1 == taller
+            assert abs((101 - lo) - (hi - 120)) <= 1
+
+    asyncio.run(main())
+
+
+def test_preview_near_file_start_still_fills_panel(repo):
+    app = _preview_app(repo, 0)
+
+    async def main():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            height = app.query_one("#context").scrollable_content_region.height
+            assert app.context_range == (1, height)
+
+    asyncio.run(main())

@@ -20,7 +20,7 @@ from .vim import VimBuffer
 STATUS_MARK = {Status.PENDING: "·", Status.EDITED: "✎", Status.COMMITTED: "✓", Status.SKIPPED: "–"}
 STATUS_STYLE = {Status.PENDING: "", Status.EDITED: "yellow", Status.COMMITTED: "green", Status.SKIPPED: "dim"}
 FILTERS: list[Status | None] = [None, Status.PENDING, Status.EDITED, Status.COMMITTED, Status.SKIPPED]
-CONTEXT_LINES = 4
+CONTEXT_LINES = 4  # per side, until the panel has a size
 DEFAULT_MESSAGE = "Humanize comments"
 
 
@@ -142,6 +142,15 @@ class Editor(TextArea):
             event.stop()
 
 
+class ContextView(VerticalScroll):
+    """The code preview; refills itself whenever its size changes."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        app = self.app
+        if isinstance(app, HumanizerApp):
+            app.render_context()
+
+
 class CommitScreen(ModalScreen[str | None]):
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "Cancel")]
 
@@ -190,7 +199,8 @@ class HumanizerApp(App[None]):
     #list { width: 45%; border: round $primary; }
     #right { width: 55%; }
     #meta { height: auto; padding: 0 1; background: $boost; }
-    #context { height: 1fr; border: round $secondary; }
+    #context { height: 2fr; border: round $secondary; overflow-x: hidden; }
+    #context-text { text-wrap: nowrap; text-overflow: clip; }
     #editor { height: 1fr; border: round $accent; border-subtitle-align: left; }
     CommitScreen, ConfirmScreen { align: center middle; }
     #dialog { width: 70; height: auto; padding: 1 2; border: thick $primary; background: $surface; }
@@ -202,6 +212,7 @@ class HumanizerApp(App[None]):
         self.session = session
         self.filter_idx = 0
         self.current: TrackedComment | None = None
+        self.context_range: tuple[int, int] | None = None  # 1-based lines shown in the preview
         self.commit_message = DEFAULT_MESSAGE
 
     def compose(self) -> ComposeResult:
@@ -210,7 +221,7 @@ class HumanizerApp(App[None]):
             yield CommentList(id="list")
             with Vertical(id="right"):
                 yield Static(id="meta")
-                with VerticalScroll(id="context"):
+                with ContextView(id="context"):
                     yield Static(id="context-text")
                 yield Editor(id="editor", soft_wrap=True)
         yield Footer()
@@ -289,6 +300,7 @@ class HumanizerApp(App[None]):
         if item is None:
             meta.update("")
             context.update("")
+            self.context_range = None
             editor.load_body("")
             return
         c = item.comment
@@ -300,17 +312,35 @@ class HumanizerApp(App[None]):
                 (f"[{status}]", STATUS_STYLE[item.status]),
             )
         )
+        self.render_context()
+        editor.load_body("" if item.deleted else c.body, keep_state=keep_editor)
+        editor.read_only = item.deleted
+
+    def render_context(self) -> None:
+        """Fill the preview panel with code, centring the comment."""
+        item = self.current
+        if item is None:
+            return
+        c = item.comment
         lines = self.session.files[c.path].split("\n")
-        lo = max(1, item.region_start - CONTEXT_LINES)
-        hi = min(len(lines), item.region_end + CONTEXT_LINES)
+        if len(lines) > 1 and not lines[-1]:
+            lines.pop()
+        panel = self.query_one("#context", VerticalScroll)
+        span = item.region_end - item.region_start + 1
+        height = panel.scrollable_content_region.height or span + 2 * CONTEXT_LINES
+        lo = item.region_start - max(height - span, 0) // 2
+        lo = max(1, min(lo, len(lines) - height + 1, item.region_start))
+        hi = min(len(lines), lo + height - 1)
         text = Text()
         for n in range(lo, hi + 1):
             hot = not item.deleted and c.start_line <= n <= c.end_line
             text.append(f"{n:>5} ", style="dim")
-            text.append(lines[n - 1].rstrip("\r") + "\n", style="bold yellow" if hot else "")
-        context.update(text)
-        editor.load_body("" if item.deleted else c.body, keep_state=keep_editor)
-        editor.read_only = item.deleted
+            text.append(lines[n - 1].rstrip("\r"), style="bold yellow" if hot else "")
+            if n < hi:
+                text.append("\n")
+        self.query_one("#context-text", Static).update(text)
+        panel.scroll_home(animate=False)
+        self.context_range = (lo, hi)
 
     # actions
 
