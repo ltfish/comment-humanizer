@@ -186,14 +186,22 @@ def test_crlf_file(repo):
     assert repo.git("status", "--porcelain") == ""
 
 
-def test_unchanged_save_is_noop_even_with_blank_edges(repo):
+def test_blank_edges_saved_as_typed(repo):
     repo.commit("base", **{"a.py": "x = 1\n"})
     repo.git("checkout", "-q", "-b", "feature")
-    src = '"""\n\nDoc.\n\n"""\nx = 1\n'
+    src = '"""\n\nDoc.\n\n"""\n# note\nx = 1\n'
     repo.commit("feat", **{"a.py": src})
     s = open_session(repo)
-    s.save(s.items[0], "Doc.\n")
-    assert repo.read("a.py") == src and s.items[0].status is Status.PENDING
+    doc, note = s.items
+    assert doc.comment.body == "\nDoc.\n"
+    s.save(doc, doc.comment.body)  # unchanged: nothing written
+    assert repo.read("a.py") == src and doc.status is Status.PENDING
+    s.save(doc, "Doc.")  # dropping the blank edges is an edit like any other
+    assert repo.read("a.py").startswith('"""\nDoc.\n"""\n')
+    s.save(note, "note\n")
+    assert repo.read("a.py").endswith("# note\n#\nx = 1\n")
+    s.save(note, " \n\n")  # whitespace only still deletes
+    assert note.deleted and repo.read("a.py").endswith('"""\nx = 1\n')
 
 
 def test_delete_each_kind_and_revert(feature):

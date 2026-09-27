@@ -9,13 +9,9 @@ class EditError(Exception):
 
 
 def normalize_body(body: str) -> list[str]:
-    """Body text as lines; an empty list means "delete the comment"."""
+    """Body text as lines, blank edge lines kept; an empty list means "delete the comment"."""
     lines = [line.rstrip() for line in body.replace("\r\n", "\n").split("\n")]
-    while lines and not lines[-1]:
-        lines.pop()
-    while lines and not lines[0]:
-        lines.pop(0)
-    return lines
+    return lines if any(lines) else []
 
 
 def _line_comment(c: Comment, text: str) -> str:

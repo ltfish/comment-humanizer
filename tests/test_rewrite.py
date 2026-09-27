@@ -132,5 +132,33 @@ def test_no_trailing_newline():
 
 
 def test_normalize_body():
-    assert normalize_body("\n a  \r\nb\n\n") == [" a", "b"]
+    assert normalize_body("\n a  \r\nb\n\n") == ["", " a", "b", "", ""]
     assert normalize_body(" \n") == []
+
+
+@pytest.mark.parametrize(
+    "src,path,body,expected",
+    [
+        ("# a\nx = 1\n", "t.py", "\na\n", "#\n# a\n#\nx = 1\n"),
+        ("x = 1  # a\n", "t.py", "a\n", "# a\n#\nx = 1\n"),
+        ("/// a\nfn f() {}\n", "t.rs", "a\n\n", "/// a\n///\n///\nfn f() {}\n"),
+        ('def f():\n    """A."""\n', "t.py", "A.\n", 'def f():\n    """A.\n\n    """\n'),
+        ('def f():\n    """\n    A.\n    """\n', "t.py", "\nA.\n", 'def f():\n    """\n\n    A.\n\n    """\n'),
+        ("/**\n * a\n */\n", "t.rs", "\na\n", "/**\n *\n * a\n *\n */\n"),
+    ],
+)
+def test_blank_edge_lines_are_kept(src, path, body, expected):
+    out = edit(src, path, 0, body)
+    assert out == expected
+    assert extract(out, path)[0].body == body
+
+
+def test_blank_edge_lines_round_trip_unchanged():
+    for src, path in [
+        ("#\n# a\n#\nx\n", "t.py"),
+        ('def f():\n    """\n\n    A.\n\n    """\n', "t.py"),
+        ("/*\n\n   a\n\n*/\n", "t.rs"),
+    ]:
+        c = extract(src, path)[0]
+        assert c.body.startswith("\n") or c.body.endswith("\n")
+        assert edit(src, path, 0, c.body) == src

@@ -27,7 +27,9 @@ A comment is listed if any of its lines was added.
 
 The editor shows the comment text without the comment syntax; saving puts the markers, quotes,
 ` * ` prefixes and indentation back. Comments can grow or shrink to any number of lines. A trailing
-comment that grows past one line moves above its code line. An empty body deletes the comment.
+comment that grows past one line moves above its code line. Blank lines at the start or end of the
+text are kept (as bare `#` lines, or blank lines inside a docstring or block comment). A body that is
+empty or only whitespace deletes the comment.
 Every save is re-parsed and refused if the text would not read back as the same comment (e.g.
 `*/` inside a block comment or `"""` inside a docstring).
 
