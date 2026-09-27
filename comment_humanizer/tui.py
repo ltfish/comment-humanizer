@@ -7,12 +7,15 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.driver import Driver
+from textual.drivers.linux_driver import LinuxDriver
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, OptionList, Static, TextArea
 from textual.widgets.option_list import Option, OptionDoesNotExist
 from textual.widgets.text_area import Selection
 
+from .driver import FastEscapeDriver
 from .models import Status, TrackedComment
 from .rewrite import EditError, normalize_body
 from .session import Session
@@ -239,6 +242,10 @@ class HumanizerApp(App[None]):
         self.current: TrackedComment | None = None
         self.context_range: tuple[int, int] | None = None  # 1-based lines shown in the preview
         self.commit_message = DEFAULT_MESSAGE
+
+    def get_driver_class(self) -> type[Driver]:
+        driver = super().get_driver_class()
+        return FastEscapeDriver if driver is LinuxDriver else driver
 
     def compose(self) -> ComposeResult:
         yield Header()

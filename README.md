@@ -65,6 +65,16 @@ Deleting removes a comment's lines when it has them to itself; an inline or trai
 out of its line. A docstring is not deleted if it is the only statement in its body or shares its
 line with code.
 
+## Escape key latency
+
+Terminals send Escape as the same byte that starts arrow-key and alt-key sequences, so a lone
+Escape is only recognised after a short wait. comment-humanizer waits 25 ms (Textual's default is
+100 ms, and its input loop only checked every 100 ms; the tool replaces that loop). Over a slow SSH
+link, where an arrow key's bytes can arrive further apart, raise it: `ESCDELAY=100 comment-humanizer`.
+Terminals that speak the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, recent Alacritty
+and iTerm2) send Escape unambiguously and have no wait. tmux and screen add their own delay
+(`set -sg escape-time 10` in tmux, `maptimeout 10` in screen).
+
 ## Committing part-way
 
 `c` commits only the changes made in the tool: the patch is applied to a temporary index built from

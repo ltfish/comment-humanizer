@@ -7,7 +7,7 @@ name = "comment-humanizer"
 version = "0.1.0"
 description = "TUI for reviewing and rewriting comments added on a git branch"
 requires-python = ">=3.10"
-dependencies = ["textual>=1.0"]
+dependencies = ["textual>=1.0,<9"]  # driver.py relies on parser internals
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-xdist"]
