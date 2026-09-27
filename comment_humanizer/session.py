@@ -100,6 +100,8 @@ class Session:
         new_text = replace_lines(old_text, start, end, new_lines)
         lang = item.comment.lang
         if _parses(lang, old_text) and not _parses(lang, new_text):
+            if expect is None and item.comment.kind is Kind.DOCSTRING:
+                raise EditError("the docstring is the only statement in its body; removing it breaks the syntax")
             raise EditError("the edit would break the file's syntax")
 
         old_comments = self.comments[path]
@@ -167,6 +169,9 @@ class Session:
             raise
         item.status = Status.EDITED
         item.dirty = True
+
+    def delete(self, item: TrackedComment) -> None:
+        self.save(item, "")
 
     def revert(self, item: TrackedComment) -> None:
         text = self.current_text(item.path)

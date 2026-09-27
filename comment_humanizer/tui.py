@@ -30,6 +30,7 @@ class CommentList(OptionList):
         Binding("k", "cursor_up", "Up", show=False),
         Binding("enter", "select", "Edit"),
         Binding("r", "app.revert", "Revert"),
+        Binding("d", "app.delete", "Delete"),
         Binding("x", "app.skip", "Skip"),
         Binding("f", "app.cycle_filter", "Filter"),
         Binding("c", "app.commit", "Commit"),
@@ -380,6 +381,22 @@ class HumanizerApp(App[None]):
             self.notify(str(e), severity="error")
             return
         self._after_change(item)
+
+    def action_delete(self) -> None:
+        item = self.current
+        if item is None:
+            return
+        if item.deleted:
+            self.notify("Already deleted; r restores it.")
+            return
+        line = item.comment.start_line
+        try:
+            self.session.delete(item)
+        except EditError as e:
+            self.notify(str(e), severity="error")
+            return
+        self._after_change(item)
+        self.notify(f"Deleted {item.path}:{line}.")
 
     def action_skip(self) -> None:
         if self.current is not None:

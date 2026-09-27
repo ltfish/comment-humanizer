@@ -86,13 +86,11 @@ def test_delete_then_revert(feature):
 
 @pytest.mark.parametrize(
     "prefix,body",
-    [("sum", "a */ b"), ("Return one.", 'has """ inside'), ("Adds.", "")],
+    [("sum", "a */ b"), ("Return one.", 'has """ inside')],
 )
 def test_invalid_edits_are_refused(feature, prefix, body):
     s = open_session(feature)
     item = by_body(s, prefix)
-    if body == "":
-        item = by_body(s, "sum")  # block comments cannot be emptied
     before = feature.read(item.path)
     with pytest.raises(EditError):
         s.save(item, body)
@@ -196,3 +194,30 @@ def test_unchanged_save_is_noop_even_with_blank_edges(repo):
     s = open_session(repo)
     s.save(s.items[0], "Doc.\n")
     assert repo.read("a.py") == src and s.items[0].status is Status.PENDING
+
+
+def test_delete_each_kind_and_revert(feature):
+    s = open_session(feature)
+    head, doc, trailing, rs_doc, rs_block = s.items
+    for item in (trailing, doc, head, rs_block, rs_doc):
+        s.delete(item)
+        assert item.deleted and item.status is Status.EDITED
+    assert feature.read("m.py") == "def f():\n    return 1\n\n\n# Unrelated old comment\nX = 2\n"
+    assert feature.read("r.rs") == "fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n"
+    with pytest.raises(EditError, match="revert it first"):
+        s.delete(head)
+    for item in s.items:
+        s.revert(item)
+    assert feature.read("m.py") == FEAT_PY and feature.read("r.rs") == FEAT_RS
+    assert all(i.status is Status.PENDING and not i.deleted for i in s.items)
+
+
+def test_delete_only_docstring_refused(repo):
+    repo.commit("base", **{"a.py": "x = 1\n"})
+    repo.git("checkout", "-q", "-b", "feature")
+    src = 'class C:\n    """Only this."""\n'
+    repo.commit("feat", **{"a.py": src})
+    s = open_session(repo)
+    with pytest.raises(EditError, match="only statement"):
+        s.delete(s.items[0])
+    assert repo.read("a.py") == src and not s.items[0].deleted

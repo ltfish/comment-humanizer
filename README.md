@@ -27,7 +27,7 @@ A comment is listed if any of its lines was added.
 
 The editor shows the comment text without the comment syntax; saving puts the markers, quotes,
 ` * ` prefixes and indentation back. Comments can grow or shrink to any number of lines. A trailing
-comment that grows past one line moves above its code line. An empty body deletes a line comment.
+comment that grows past one line moves above its code line. An empty body deletes the comment.
 Every save is re-parsed and refused if the text would not read back as the same comment (e.g.
 `*/` inside a block comment or `"""` inside a docstring).
 
@@ -37,6 +37,7 @@ In the list:
 | --- | --- |
 | `j` / `k`, arrows | move |
 | `enter` | edit the selected comment |
+| `d` | delete the comment from the file (`r` brings it back) |
 | `r` | revert the comment to its original text |
 | `x` | mark as skipped / pending |
 | `f` | cycle the status filter |
@@ -53,6 +54,10 @@ command being typed.
 - `:w` saves into the file, `:wq` / `:x` save and go back to the list, `:q` goes back (refused with
   unsaved changes), `:q!` discards them. `esc` in normal mode also goes back when nothing is unsaved.
 - `ctrl+s` saves from any mode.
+
+Deleting removes a comment's lines when it has them to itself; an inline or trailing comment is cut
+out of its line. A docstring is not deleted if it is the only statement in its body or shares its
+line with code.
 
 ## Committing part-way
 

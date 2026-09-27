@@ -162,6 +162,27 @@ def test_error_is_reported_not_raised(repo):
     run(app, scenario)
 
 
+def test_delete_hotkey(repo):
+    app = make_app(repo)
+
+    async def scenario(app, pilot):
+        lst = app.query_one(CommentList)
+        await pilot.press("j", "d")
+        assert repo.read("a.py") == "# old one\nx = 1\n"
+        item = app.session.items[1]
+        assert item.deleted and lst.has_focus
+        assert "Deleted a.py:2." in messages(app)
+        await pilot.press("d")
+        assert "Already deleted; r restores it." in messages(app)
+        await pilot.press("k", "d")  # deleting a line above shifts nothing it should not
+        assert repo.read("a.py") == "x = 1\n"
+        await pilot.press("r", "j", "r")
+        assert repo.read("a.py") == "# old one\nx = 1  # old two\n"
+        assert not any(i.deleted for i in app.session.items)
+
+    run(app, scenario)
+
+
 def test_quit_confirms_when_dirty(repo):
     app = make_app(repo)
 

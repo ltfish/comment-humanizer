@@ -65,9 +65,24 @@ def render(c: Comment, source: str, lines: list[str]) -> list[str]:
         return out
 
     if not lines:
-        raise EditError(f"a {c.kind.value} comment cannot be emptied")
+        return _delete_delimited(c, head, tail)
     assert c.delim is not None
     return (head + render_delimited(c.delim, lines) + tail).split("\n")
+
+
+def _delete_delimited(c: Comment, head: str, tail: str) -> list[str]:
+    if not head.strip() and not tail.strip():
+        return []  # the comment has its lines to itself
+    if c.kind is Kind.DOCSTRING:
+        raise EditError("the docstring shares its line with code; edit that line by hand")
+    # an inline block comment: drop it and one space next to it
+    if not head.strip():
+        tail = tail.lstrip(" ")
+    elif not tail.strip() or tail[0] in ",;)]}.":
+        head = head.rstrip(" ")
+    elif head.endswith(" ") and tail.startswith(" "):
+        tail = tail[1:]
+    return [head + tail]
 
 
 def replace_lines(source: str, start: int, end: int, new_lines: list[str]) -> str:

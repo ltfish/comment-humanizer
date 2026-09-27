@@ -84,9 +84,25 @@ def test_delete_line_comment_and_trailing():
     assert edit("x = 1  # a\n", "t.py", 0, "  \n") == "x = 1\n"
 
 
-def test_empty_docstring_rejected():
-    with pytest.raises(EditError):
-        edit('def f():\n    """Doc."""\n', "t.py", 0, "")
+@pytest.mark.parametrize(
+    "src,path,expected",
+    [
+        ('def f():\n    """Doc.\n\n    More.\n    """\n    return 1\n', "t.py", "def f():\n    return 1\n"),
+        ("fn f() {\n    /*\n     * a\n     */\n    g();\n}\n", "t.rs", "fn f() {\n    g();\n}\n"),
+        ("    /* a */ g();\n", "t.rs", "    g();\n"),
+        ("g(); /* a */\n", "t.rs", "g();\n"),
+        ("g(1, /* a */ 2);\n", "t.rs", "g(1, 2);\n"),
+        ("g(/* a */);\n", "t.rs", "g();\n"),
+        ("g(1 /* a\n  b */, 2);\n", "t.rs", "g(1, 2);\n"),
+    ],
+)
+def test_delete_delimited(src, path, expected):
+    assert edit(src, path, 0, "") == expected
+
+
+def test_delete_docstring_sharing_a_line_rejected():
+    with pytest.raises(EditError, match="shares its line"):
+        edit('def f(): """Doc."""\n', "t.py", 0, "")
 
 
 def test_single_line_docstring_grows():
