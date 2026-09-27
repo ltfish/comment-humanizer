@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comment-humanizer"
+version = "0.1.0"
+description = "TUI for reviewing and rewriting comments added on a git branch"
+requires-python = ">=3.10"
+dependencies = ["textual>=1.0"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-xdist"]
+
+[project.scripts]
+comment-humanizer = "comment_humanizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["comment_humanizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-n auto"
+
+[tool.ruff]
+line-length = 120
