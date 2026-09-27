@@ -11,6 +11,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, OptionList, Static, TextArea
 from textual.widgets.option_list import Option, OptionDoesNotExist
+from textual.widgets.text_area import Selection
 
 from .models import Status, TrackedComment
 from .rewrite import EditError, normalize_body
@@ -40,7 +41,14 @@ class CommentList(OptionList):
 
 # keys that TextArea's own bindings handle and that are safe in normal mode
 NAV_KEYS = {"up", "down", "left", "right", "home", "end", "pageup", "pagedown"}
-MODE_HINT = {"normal": "NORMAL   i insert  :w save  :q back", "insert": "-- INSERT --   esc normal mode"}
+MODE_HINT = {
+    "normal": "NORMAL   i insert  v visual  :w save  :q back",
+    "insert": "-- INSERT --   esc normal mode",
+    "v": "-- VISUAL --",
+    "V": "-- VISUAL LINE --",
+}
+# arrow keys become motions in visual mode, where the model owns the cursor
+VISUAL_NAV = {"up": "k", "down": "j", "left": "h", "right": "l", "home": "0", "end": "$"}
 
 
 class Editor(TextArea):
@@ -87,6 +95,7 @@ class Editor(TextArea):
         row, col = self.cursor_location
         self.load_text(text)
         if keep_state:
+            self.vim.visual = None
             self.vim.lines = text.split("\n")
             self.vim.row, self.vim.col = row, col
             self.vim.clamp()
@@ -98,11 +107,23 @@ class Editor(TextArea):
     def _sync_out(self) -> None:
         if self.text != self.vim.text:
             self.replace(self.vim.text, (0, 0), self.document.end)
-        self.cursor_location = (self.vim.row, self.vim.col)
+        vim = self.vim
+        if vim.visual is None:
+            # assigning cursor_location would extend a live selection instead of clearing it
+            self.selection = Selection.cursor((vim.row, vim.col))
+            return
+        (r1, c1), (r2, c2) = vim.selection()
+        if vim.visual == "V":
+            start, end = (r1, 0), (r2, len(vim.lines[r2]))
+        else:
+            start, end = (r1, c1), (r2, c2 + 1)  # TextArea selections exclude their end
+        forward = (vim.row, vim.col) >= vim.anchor
+        self.selection = Selection(start, end) if forward else Selection(end, start)
 
     def _sync_in(self) -> None:
         self.vim.lines = self.text.split("\n")
-        self.vim.row, self.vim.col = self.cursor_location
+        if self.vim.visual is None:
+            self.vim.row, self.vim.col = self.cursor_location
 
     async def _on_key(self, event: events.Key) -> None:
         # TextArea._on_key runs after this one unless prevent_default() is called
@@ -120,14 +141,16 @@ class Editor(TextArea):
             event.prevent_default()
             self._command_key(event)
             return
-        if event.key in NAV_KEYS:
+        visual = self.vim.visual is not None
+        if event.key in NAV_KEYS and not visual:
             return
         event.stop()
         event.prevent_default()
         if self.read_only and event.key != "escape" and event.character != ":":
             return
+        key = event.character if event.is_printable and event.character else event.key
         self._sync_in()
-        action = self.vim.feed(event.character if event.is_printable and event.character else event.key)
+        action = self.vim.feed(VISUAL_NAV.get(key, key) if visual else key)
         self._sync_out()
         if action == "insert":
             self.set_mode("insert")
@@ -135,6 +158,8 @@ class Editor(TextArea):
             self.set_mode("command")
         elif action == "leave":
             self.post_message(self.Leave())
+        else:
+            self.set_mode(self.vim.visual or "normal")
 
     async def _on_paste(self, event: events.Paste) -> None:
         if self.vim_mode != "insert":

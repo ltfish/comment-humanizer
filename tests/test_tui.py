@@ -183,6 +183,41 @@ def test_delete_hotkey(repo):
     run(app, scenario)
 
 
+def test_visual_mode(repo):
+    repo.commit("base", **{"a.py": "x = 1\n"})
+    repo.git("checkout", "-q", "-b", "feature")
+    repo.commit("feat", **{"a.py": "# one two three\n# four five\nx = 1\n"})
+    root = str(repo.root)
+    app = HumanizerApp(Session(root, resolve_base(root)))
+
+    async def scenario(app, pilot):
+        editor = app.query_one(Editor)
+        await pilot.press("enter", "w", "v", "e")
+        assert editor.vim_mode == "v" and editor.border_subtitle == "-- VISUAL --"
+        assert editor.selected_text == "two"
+        await pilot.press("right", "right")  # arrow keys extend the selection
+        assert editor.selected_text == "two t"
+        await pilot.press("o")
+        assert editor.selection.end == (0, 4) and editor.selected_text == "two t"
+        await pilot.press("escape")
+        assert editor.vim_mode == "normal" and editor.selected_text == ""
+
+        await pilot.press("V")
+        assert editor.border_subtitle == "-- VISUAL LINE --" and editor.selected_text == "one two three"
+        await pilot.press("j")
+        assert editor.selected_text == "one two three\nfour five"
+        await pilot.press("J")
+        assert editor.text == "one two three four five" and editor.vim_mode == "normal"
+
+        await pilot.press("w", "v", "e", "d")
+        assert editor.text == "one two three  five" and editor.selected_text == ""  # J left the cursor at the join
+        await pilot.press("v", "l", ":", "w", "enter")
+        assert editor.vim_mode == "normal"
+        assert repo.read("a.py") == "# one two three  five\nx = 1\n"
+
+    run(app, scenario)
+
+
 def test_quit_confirms_when_dirty(repo):
     app = make_app(repo)
 

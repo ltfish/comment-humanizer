@@ -133,3 +133,120 @@ def test_pending_and_special_keys():
 def test_D_on_empty_line_keeps_line_break():
     v, _ = run("a\n\nb", "D", row=1)
     assert v.text == "a\n\nb"
+
+
+# visual mode
+
+TEXT = "one two three\n  four five\nsix"
+
+
+def vis(keys, row=0, col=0, text=TEXT):
+    v, actions = run(text, keys, row, col)
+    return v, actions
+
+
+def test_visual_enter_switch_and_leave():
+    v, _ = vis("v")
+    assert v.visual == "v" and v.anchor == (0, 0)
+    v, _ = vis("vV")
+    assert v.visual == "V"
+    v, _ = vis("vv")
+    assert v.visual is None
+    v, _ = vis(["v", "l", "escape"])
+    assert v.visual is None and (v.row, v.col) == (0, 1) and v.text == TEXT
+
+
+@pytest.mark.parametrize(
+    "keys,sel",
+    [
+        ("vw", ((0, 0), (0, 4))),
+        ("v2e", ((0, 0), (0, 6))),
+        ("v$", ((0, 0), (0, 13))),  # past the last character: takes the line break
+        ("vj", ((0, 0), (1, 0))),
+        ("vG", ((0, 0), (2, 0))),
+        ("v3l", ((0, 0), (0, 3))),
+        ("wvb", ((0, 0), (0, 4))),  # selection is ordered whatever the direction
+        ("vwo", ((0, 0), (0, 4))),
+    ],
+)
+def test_visual_motions(keys, sel):
+    v, _ = vis(keys)
+    assert v.selection() == sel
+
+
+def test_visual_o_moves_cursor_to_other_end():
+    v, _ = vis("vwo")
+    assert (v.row, v.col) == (0, 0) and v.anchor == (0, 4)
+
+
+@pytest.mark.parametrize(
+    "keys,text,pos",
+    [
+        ("vld", "e two three\n  four five\nsix", (0, 0)),
+        ("vex", " two three\n  four five\nsix", (0, 0)),
+        ("wvjd", "one r five\nsix", (0, 4)),
+        ("Vd", "  four five\nsix", (0, 2)),
+        ("Vjd", "six", (0, 0)),
+        ("jVkx", "six", (0, 0)),
+        ("v$d", "  four five\nsix", (0, 0)),  # $ in visual takes the line break too
+        ("veyP", "oneone two three\n  four five\nsix", (0, 2)),
+        ("vey$vp", "one two threone\n  four five\nsix", (0, 14)),
+        ("Vy2jp", "one two three\n  four five\nsix\none two three", (3, 0)),
+        ("veyjVp", "one two three\none\nsix", (1, 0)),
+        ("VyjvlP", "one two three\n\none two three\nfour five\nsix", (2, 0)),
+        ("v2e~", "ONE TWO three\n  four five\nsix", (0, 0)),
+        ("VjU", "ONE TWO THREE\n  FOUR FIVE\nsix", (0, 0)),
+        ("VUVu", TEXT, (0, 0)),
+        ("VJ", "one two three four five\nsix", (0, 13)),
+        ("VjjJ", "one two three four five six", (0, 23)),
+    ],
+)
+def test_visual_ops(keys, text, pos):
+    v, _ = vis(keys)
+    assert (v.text, (v.row, v.col), v.visual) == (text, pos, None)
+
+
+@pytest.mark.parametrize("keys,text", [("vec", " two three"), ("ves", " two three"), ("Vc", "")])
+def test_visual_change_enters_insert(keys, text):
+    v, actions = vis(keys)
+    assert actions[-1] == "insert" and v.lines[0] == text and v.visual is None
+
+
+def test_visual_yank_keeps_text_and_register_shape():
+    v, _ = vis("wvey")
+    assert v.text == TEXT and v.register == ("two", False) and (v.row, v.col) == (0, 4)
+    v, _ = vis("Vjy")
+    assert v.register == ("one two three\n  four five", True)
+
+
+def test_visual_ops_are_one_undo_step():
+    for keys in ("vjd", "VjU", "VjJ", "veyjVp"):
+        v, _ = vis(keys + "u")
+        assert v.text == TEXT, keys
+    v, _ = vis("VUu")
+    v.feed("ctrl+r")
+    assert v.lines[0] == "ONE TWO THREE"
+
+
+def test_visual_colon_opens_command_line():
+    v, actions = vis("vl:")
+    assert actions[-1] == "command" and v.visual is None
+
+
+def test_visual_on_empty_line_takes_line_break():
+    v, _ = vis("vd", row=1, text="a\n\nb")
+    assert v.text == "a\nb"
+
+
+def test_visual_P_keeps_register_and_p_swaps_it():
+    v, _ = vis("veywvep")
+    assert v.lines[0] == "one one three" and v.register == ("two", False)
+    v, _ = vis("veywveP")
+    assert v.lines[0] == "one one three" and v.register == ("one", False)
+
+
+def test_visual_dollar_display_column_and_reset():
+    v, _ = vis("v$")
+    assert v.col == 13 and v.eol
+    v, _ = vis("v$h")
+    assert v.col == 12 and not v.eol

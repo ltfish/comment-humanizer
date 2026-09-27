@@ -6,6 +6,9 @@ import re
 from dataclasses import dataclass
 
 _PENDING = re.compile(r"([1-9]\d*)?(?:([dcy])([1-9]\d*)?)?(.*)")
+_VISUAL_PENDING = re.compile(r"([1-9]\d*)?(.*)")
+# visual-mode keys that act on the selection
+VISUAL_OPS = {"d", "x", "c", "s", "y", "p", "P", "J", "~", "u", "U"}
 MOTIONS = {"h", "j", "k", "l", "w", "b", "e", "0", "^", "$", "G", "gg"}
 LINEWISE_MOTIONS = {"j", "k", "G", "gg"}
 INCLUSIVE_MOTIONS = {"e", "$"}
@@ -36,6 +39,9 @@ class VimBuffer:
         self.register = ("", False)  # (text, linewise)
         self.undo_stack: list[tuple[list[str], int, int]] = []
         self.redo_stack: list[tuple[list[str], int, int]] = []
+        self.visual: str | None = None  # "v" (charwise) or "V" (linewise)
+        self.anchor = (0, 0)
+        self.eol = False  # visual `$`: the selection runs through the line break
         self.reset(text)
 
     # state
@@ -44,6 +50,7 @@ class VimBuffer:
         self.lines = text.split("\n")
         self.row = self.col = 0
         self.pending = ""
+        self.visual = None
         self.undo_stack.clear()
         self.redo_stack.clear()
 
@@ -57,7 +64,8 @@ class VimBuffer:
 
     def clamp(self) -> None:
         self.row = max(0, min(self.row, len(self.lines) - 1))
-        self.col = max(0, min(self.col, max(len(self.lines[self.row]) - 1, 0)))
+        last = len(self.lines[self.row]) if self.visual and self.eol else len(self.lines[self.row]) - 1
+        self.col = max(0, min(self.col, max(last, 0)))
 
     def end_insert(self) -> None:
         """Leaving insert mode: drop a no-op undo step and step the cursor back like vim."""
@@ -245,6 +253,11 @@ class VimBuffer:
 
     def _command(self, key: str, count: int, explicit: bool) -> str | None:
         line = self.lines[self.row]
+        if key in ("v", "V"):
+            self.visual = key
+            self.eol = False
+            self.anchor = (self.row, self.col)
+            return None
         if key in ("i", "a", "I", "A"):
             self._snapshot()
             self.col = {
@@ -275,6 +288,13 @@ class VimBuffer:
 
     def feed(self, key: str) -> str | None:
         """Process one key. Printable keys are their character; others use Textual key names."""
+        if self.visual:
+            result = self._visual_feed(key)
+            if not self.visual:
+                self.eol = False
+            if result != "insert":
+                self.clamp()
+            return result
         result: str | None = None
         if key == "escape":
             leave = not self.pending
@@ -321,3 +341,116 @@ class VimBuffer:
                 self.col = min(self.col, max(len(self.lines[self.row]) - 1, 0))
             return None
         return self._command(rest, count, explicit)
+
+    # visual mode
+
+    def selection(self) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Ordered (start, end) of the selection; end is inclusive."""
+        a, b = self.anchor, (self.row, self.col)
+        return (a, b) if a <= b else (b, a)
+
+    def _visual_feed(self, key: str) -> str | None:
+        if key == "escape":
+            self.pending = ""
+            self.visual = None
+            return None
+        key = {"enter": "j", "backspace": "h", "delete": "x"}.get(key, key)
+        if len(key) != 1:
+            self.pending = ""
+            return None
+        self.pending += key
+        m = _VISUAL_PENDING.fullmatch(self.pending)
+        assert m is not None
+        c1, rest = m.groups()
+        if not rest or rest == "g":
+            return None
+        self.pending = ""
+        count = int(c1 or 1)
+        if rest in MOTIONS:
+            target = self._motion(rest, count, bool(c1))
+            self.row, self.col = target.row, target.col
+            self.eol = rest == "$"
+            if self.eol:
+                self.col = len(self.lines[self.row])
+        elif rest == "o":
+            self.anchor, (self.row, self.col) = (self.row, self.col), self.anchor
+        elif rest in ("v", "V"):
+            self.visual = None if rest == self.visual else rest
+        elif rest == ":":
+            self.visual = None
+            return "command"
+        elif rest in VISUAL_OPS:
+            return self._visual_op(rest)
+        return None
+
+    def _char_range(self) -> tuple[int, int]:
+        (r1, c1), (r2, c2) = self.selection()
+        # the character under the cursor is selected; on an empty line that is its line break
+        return self._offset(r1, c1), min(self._offset(r2, c2) + 1, len(self.text))
+
+    def _visual_op(self, op: str) -> str | None:
+        linewise = self.visual == "V"
+        (r1, _), (r2, _) = self.selection()
+        self.visual = None
+        self.eol = False
+        if op in ("d", "x", "c", "s", "y"):
+            kind = {"x": "d", "s": "c"}.get(op, op)
+            if linewise:
+                self.row, self.col = r1, 0
+                return self._apply(kind, Motion(r2, 0, linewise=True))
+            start, end = self._char_range()
+            text = self.text
+            self.register = (text[start:end], False)
+            if kind != "y":
+                self._snapshot()
+                self.lines = (text[:start] + text[end:]).split("\n")
+            self.row, self.col = self._position(start)
+            return "insert" if kind == "c" else None
+        self._snapshot()
+        if op in ("p", "P"):
+            kept = self.register
+            self._visual_put(linewise, r1, r2)
+            if op == "P":
+                self.register = kept
+        elif op == "J":
+            self._join(r1, max(r2, r1 + 1))
+        else:
+            convert = {"~": str.swapcase, "u": str.lower, "U": str.upper}[op]
+            if linewise:
+                self.lines[r1 : r2 + 1] = [convert(line) for line in self.lines[r1 : r2 + 1]]
+                self.row, self.col = r1, 0
+            else:
+                start, end = self._char_range()
+                text = self.text
+                self.lines = (text[:start] + convert(text[start:end]) + text[end:]).split("\n")
+                self.row, self.col = self._position(start)
+        if self.undo_stack and self.undo_stack[-1][0] == self.lines:
+            self.undo_stack.pop()  # nothing changed
+        return None
+
+    def _visual_put(self, linewise: bool, r1: int, r2: int) -> None:
+        put, put_linewise = self.register
+        if linewise:
+            self.register = ("\n".join(self.lines[r1 : r2 + 1]), True)
+            self.lines[r1 : r2 + 1] = put.split("\n")
+            self.row, self.col = r1, self._first_nonblank(r1)
+            return
+        start, end = self._char_range()
+        text = self.text
+        self.register = (text[start:end], False)
+        insert = "\n" + put + "\n" if put_linewise else put
+        self.lines = (text[:start] + insert + text[end:]).split("\n")
+        self.row, self.col = self._position(start + len(insert) - 1 if not put_linewise else start + 1)
+
+    def _join(self, r1: int, r2: int) -> None:
+        r2 = min(r2, len(self.lines) - 1)
+        joined = self.lines[r1]
+        col = len(joined)
+        for line in self.lines[r1 + 1 : r2 + 1]:
+            piece = line.lstrip()
+            col = len(joined)
+            if piece:
+                joined = (joined.rstrip() + " " + piece) if joined.strip() else piece
+                col = len(joined) - len(piece) - 1 if joined != piece else 0
+        self.lines[r1 : r2 + 1] = [joined]
+        self.row, self.col = r1, col
