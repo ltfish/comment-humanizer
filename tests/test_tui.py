@@ -1,5 +1,7 @@
 import asyncio
 
+from textual import events
+
 from comment_humanizer.gitdiff import resolve_base
 from comment_humanizer.models import Status
 from comment_humanizer.session import Session
@@ -214,6 +216,39 @@ def test_visual_mode(repo):
         await pilot.press("v", "l", ":", "w", "enter")
         assert editor.vim_mode == "normal"
         assert repo.read("a.py") == "# one two three  five\nx = 1\n"
+
+    run(app, scenario)
+
+
+def test_replace_mode(repo):
+    app = make_app(repo)
+
+    async def scenario(app, pilot):
+        editor = app.query_one(Editor)
+        await pilot.press("enter", "R")
+        assert editor.vim_mode == "replace" and editor.border_subtitle.startswith("-- REPLACE --")
+        await pilot.press(*"NEW")
+        assert editor.text == "NEW one" and editor.cursor_location == (0, 3)
+        await pilot.press("backspace")
+        assert editor.text == "NEd one"
+        await pilot.press("right", "right", "right", *"12")  # arrows move; typing past the end appends
+        assert editor.text == "NEd o12"
+        await pilot.press("escape")
+        assert editor.vim_mode == "normal" and editor.cursor_location == (0, 6)
+        await pilot.press("0", "r", "n")
+        assert editor.text == "nEd o12"
+        await command(pilot, "w")
+        assert repo.read("a.py").startswith("# nEd o12\n")
+
+        await pilot.press("R", "Z", "ctrl+s")  # saving mid-session returns to normal mode
+        assert editor.vim_mode == "normal" and repo.read("a.py").startswith("# ZEd o12\n")
+        await pilot.press("x")
+        assert editor.text == "Zd o12"  # the cursor stayed after the Z
+
+        await pilot.press("0", "R")
+        editor.post_message(events.Paste("ab\ncd"))  # pasting overwrites like typing
+        await pilot.pause()
+        assert editor.text == "ab\ncd12" and editor.vim_mode == "replace"
 
     run(app, scenario)
 

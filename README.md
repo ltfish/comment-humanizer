@@ -53,6 +53,10 @@ command being typed.
 - Insert: `i a I A o O`; `esc` returns to normal mode.
 - Edits: `x`, `dd`, `dw`, `de`, `D`, `cw`, `cc`, `C`, `yy`, `yw`, `p`, `P`, and operators with any
   motion above; `u` undo, `ctrl+r` redo.
+- Replace: `R` overwrites as you type (appending past the end of a line, `enter` breaks the line);
+  `backspace` restores what was overwritten; `esc` returns to normal mode. `r{char}` replaces the
+  character under the cursor (`3rx` three of them, `r` then `enter` a line break), and in visual
+  mode every selected character.
 - Visual: `v` (characters) and `V` (lines) select with any motion above; `o` jumps to the other end,
   `esc` or the same key again leaves. On the selection: `d`/`x` delete, `c`/`s` change, `y` yank,
   `p` replace with the register (`P` keeps the register), `J` join lines, `~`/`u`/`U` toggle, lower

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_PENDING = re.compile(r"([1-9]\d*)?(?:([dcy])([1-9]\d*)?)?(.*)")
-_VISUAL_PENDING = re.compile(r"([1-9]\d*)?(.*)")
+_PENDING = re.compile(r"([1-9]\d*)?(?:([dcy])([1-9]\d*)?)?(.*)", re.DOTALL)
+_VISUAL_PENDING = re.compile(r"([1-9]\d*)?(.*)", re.DOTALL)
 # visual-mode keys that act on the selection
 VISUAL_OPS = {"d", "x", "c", "s", "y", "p", "P", "J", "~", "u", "U"}
 MOTIONS = {"h", "j", "k", "l", "w", "b", "e", "0", "^", "$", "G", "gg"}
@@ -42,6 +42,9 @@ class VimBuffer:
         self.visual: str | None = None  # "v" (charwise) or "V" (linewise)
         self.anchor = (0, 0)
         self.eol = False  # visual `$`: the selection runs through the line break
+        self.replacing = False
+        # originals overwritten in this replace session; None marks an appended char or line break
+        self.replaced: list[str | None] = []
         self.reset(text)
 
     # state
@@ -51,6 +54,8 @@ class VimBuffer:
         self.row = self.col = 0
         self.pending = ""
         self.visual = None
+        self.replacing = False
+        self.replaced.clear()
         self.undo_stack.clear()
         self.redo_stack.clear()
 
@@ -64,7 +69,8 @@ class VimBuffer:
 
     def clamp(self) -> None:
         self.row = max(0, min(self.row, len(self.lines) - 1))
-        last = len(self.lines[self.row]) if self.visual and self.eol else len(self.lines[self.row]) - 1
+        past_end = (self.visual and self.eol) or self.replacing
+        last = len(self.lines[self.row]) if past_end else len(self.lines[self.row]) - 1
         self.col = max(0, min(self.col, max(last, 0)))
 
     def end_insert(self) -> None:
@@ -253,6 +259,14 @@ class VimBuffer:
 
     def _command(self, key: str, count: int, explicit: bool) -> str | None:
         line = self.lines[self.row]
+        if key == "R":
+            self._snapshot()
+            self.replacing = True
+            self.replaced.clear()
+            return None
+        if len(key) == 2 and key[0] == "r":
+            self._replace_chars(count, key[1])
+            return None
         if key in ("v", "V"):
             self.visual = key
             self.eol = False
@@ -288,6 +302,12 @@ class VimBuffer:
 
     def feed(self, key: str) -> str | None:
         """Process one key. Printable keys are their character; others use Textual key names."""
+        if self.replacing:
+            self._replace_feed(key)
+            self.clamp()
+            return None
+        if key == "enter" and not self.visual and self.pending and self.pending[-1] == "r":
+            key = "\n"  # r<enter> replaces the character with a line break
         if self.visual:
             result = self._visual_feed(key)
             if not self.visual:
@@ -325,7 +345,7 @@ class VimBuffer:
         m = _PENDING.fullmatch(self.pending)
         assert m is not None
         c1, op, c2, rest = m.groups()
-        if not rest or rest == "g":
+        if not rest or rest == "g" or (rest == "r" and not op):
             return None  # wait for more keys
         self.pending = ""
         explicit = bool(c1 or c2)
@@ -354,6 +374,9 @@ class VimBuffer:
             self.pending = ""
             self.visual = None
             return None
+        if self.pending.endswith("r") and len(key) != 1:
+            self.pending = ""  # r needs a character; a line break is not supported here
+            return None
         key = {"enter": "j", "backspace": "h", "delete": "x"}.get(key, key)
         if len(key) != 1:
             self.pending = ""
@@ -362,10 +385,13 @@ class VimBuffer:
         m = _VISUAL_PENDING.fullmatch(self.pending)
         assert m is not None
         c1, rest = m.groups()
-        if not rest or rest == "g":
+        if not rest or rest in ("g", "r"):
             return None
         self.pending = ""
         count = int(c1 or 1)
+        if len(rest) == 2 and rest[0] == "r":
+            self._visual_replace(rest[1])
+            return None
         if rest in MOTIONS:
             target = self._motion(rest, count, bool(c1))
             self.row, self.col = target.row, target.col
@@ -454,3 +480,74 @@ class VimBuffer:
                 col = len(joined) - len(piece) - 1 if joined != piece else 0
         self.lines[r1 : r2 + 1] = [joined]
         self.row, self.col = r1, col
+
+    # replace mode
+
+    def _replace_chars(self, count: int, ch: str) -> None:
+        """`r`: overwrite `count` characters; does nothing if the line is too short, like vim."""
+        line = self.lines[self.row]
+        if self.col + count > len(line):
+            return
+        self._snapshot()
+        if ch == "\n":
+            self.lines[self.row : self.row + 1] = [line[: self.col], line[self.col + count :]]
+            self.row, self.col = self.row + 1, 0
+            return
+        self.lines[self.row] = line[: self.col] + ch * count + line[self.col + count :]
+        self.col += count - 1
+
+    def _visual_replace(self, ch: str) -> None:
+        linewise = self.visual == "V"
+        (r1, _), (r2, _) = self.selection()
+        self.visual = None
+        self.eol = False
+        self._snapshot()
+        if linewise:
+            self.lines[r1 : r2 + 1] = [ch * len(line) for line in self.lines[r1 : r2 + 1]]
+            self.row, self.col = r1, 0
+        else:
+            start, end = self._char_range()
+            text = self.text
+            middle = "".join(c if c == "\n" else ch for c in text[start:end])
+            self.lines = (text[:start] + middle + text[end:]).split("\n")
+            self.row, self.col = self._position(start)
+        if self.undo_stack[-1][0] == self.lines:
+            self.undo_stack.pop()
+
+    def _replace_feed(self, key: str) -> None:
+        line = self.lines[self.row]
+        if key == "escape":
+            self.replacing = False
+            self.replaced.clear()
+            if self.undo_stack and self.undo_stack[-1][0] == self.lines:
+                self.undo_stack.pop()
+            self.col -= 1
+        elif key == "enter":
+            self.lines[self.row : self.row + 1] = [line[: self.col], line[self.col :]]
+            self.row, self.col = self.row + 1, 0
+            self.replaced.append(None)
+        elif key == "backspace":
+            if not self.replaced:
+                self.col = max(self.col - 1, 0)  # outside this session's text: only move
+                return
+            original = self.replaced.pop()
+            if self.col == 0:  # undo a line break typed in this session
+                prev = self.lines[self.row - 1]
+                self.lines[self.row - 1 : self.row + 1] = [prev + line]
+                self.row, self.col = self.row - 1, len(prev)
+                return
+            self.col -= 1
+            rest = line[self.col + 1 :] if original is None else original + line[self.col + 1 :]
+            self.lines[self.row] = line[: self.col] + rest
+        elif key in ("left", "right", "up", "down", "home", "end"):
+            self.replaced.clear()  # like vim, moving ends what backspace can restore
+            if key in ("left", "right"):
+                self.col += 1 if key == "right" else -1
+            elif key in ("up", "down"):
+                self.row += 1 if key == "down" else -1
+            else:
+                self.col = 0 if key == "home" else len(self.lines[self.row])
+        elif len(key) == 1:
+            self.replaced.append(line[self.col] if self.col < len(line) else None)
+            self.lines[self.row] = line[: self.col] + key + line[self.col + 1 :]
+            self.col += 1

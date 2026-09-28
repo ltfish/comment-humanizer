@@ -47,6 +47,7 @@ NAV_KEYS = {"up", "down", "left", "right", "home", "end", "pageup", "pagedown"}
 MODE_HINT = {
     "normal": "NORMAL   i insert  v visual  :w save  :q back",
     "insert": "-- INSERT --   esc normal mode",
+    "replace": "-- REPLACE --   esc normal mode",
     "v": "-- VISUAL --",
     "V": "-- VISUAL LINE --",
 }
@@ -99,6 +100,8 @@ class Editor(TextArea):
         self.load_text(text)
         if keep_state:
             self.vim.visual = None
+            self.vim.replacing = False
+            self.vim.replaced.clear()
             self.vim.lines = text.split("\n")
             self.vim.row, self.vim.col = row, col
             self.vim.clamp()
@@ -145,7 +148,7 @@ class Editor(TextArea):
             self._command_key(event)
             return
         visual = self.vim.visual is not None
-        if event.key in NAV_KEYS and not visual:
+        if event.key in NAV_KEYS and not visual and not self.vim.replacing:
             return
         event.stop()
         event.prevent_default()
@@ -153,6 +156,7 @@ class Editor(TextArea):
             return
         key = event.character if event.is_printable and event.character else event.key
         self._sync_in()
+        # replace mode takes arrow keys by name; visual mode turns them into motions
         action = self.vim.feed(VISUAL_NAV.get(key, key) if visual else key)
         self._sync_out()
         if action == "insert":
@@ -162,9 +166,14 @@ class Editor(TextArea):
         elif action == "leave":
             self.post_message(self.Leave())
         else:
-            self.set_mode(self.vim.visual or "normal")
+            self.set_mode("replace" if self.vim.replacing else self.vim.visual or "normal")
 
     async def _on_paste(self, event: events.Paste) -> None:
+        if self.vim_mode == "replace":
+            self._sync_in()
+            for ch in event.text.replace("\r\n", "\n"):
+                self.vim.feed("enter" if ch == "\n" else ch)
+            self._sync_out()
         if self.vim_mode != "insert":
             event.prevent_default()
             event.stop()

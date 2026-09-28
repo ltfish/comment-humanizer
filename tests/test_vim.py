@@ -250,3 +250,73 @@ def test_visual_dollar_display_column_and_reset():
     assert v.col == 13 and v.eol
     v, _ = vis("v$h")
     assert v.col == 12 and not v.eol
+
+
+# replace mode
+
+
+def rep_run(keys, text="abc def\nxyz", row=0, col=0):
+    return run(text, keys, row, col)
+
+
+def test_R_overwrites_and_appends():
+    v, _ = rep_run(["R", "X", "Y"])
+    assert v.replacing and v.text == "XYc def\nxyz" and v.col == 2
+    v, _ = rep_run(["$", "R", "1", "2", "3"])
+    assert v.lines[0] == "abc de123" and v.col == 9  # past the end: appends
+
+
+def test_R_escape_steps_back_and_is_one_undo_step():
+    v, _ = rep_run(["R", "X", "Y", "escape"])
+    assert not v.replacing and v.col == 1
+    v.feed("u")
+    assert v.text == "abc def\nxyz"
+    v, _ = rep_run(["R", "escape"])
+    assert v.undo_stack == []  # a session that changed nothing leaves no undo step
+
+
+def test_R_enter_splits_line():
+    v, _ = rep_run(["l", "R", "enter", "Q"])
+    assert v.text == "a\nQc def\nxyz" and (v.row, v.col) == (1, 1)
+
+
+def test_R_backspace_restores_and_only_moves_outside_session():
+    v, _ = rep_run(["$", "R", "1", "2", "3", "backspace", "backspace", "backspace", "backspace"])
+    # 1 overwrote f; 2 and 3 were appended; the fourth backspace only moves left
+    assert v.lines[0] == "abc def" and v.col == 5
+    v, _ = rep_run(["l", "R", "enter", "Q", "backspace", "backspace"])
+    assert v.text == "abc def\nxyz" and (v.row, v.col) == (0, 1)
+
+
+def test_R_arrows_move_and_forget_restores():
+    v, _ = rep_run(["R", "X", "right", "Y", "backspace", "backspace"])
+    assert v.lines[0] == "Xbc def" and v.col == 1  # Y restored to c; X kept after the move
+    v, _ = rep_run(["R", "down", "Z"])
+    assert v.text == "abc def\nZyz"
+
+
+@pytest.mark.parametrize(
+    "keys,text,pos",
+    [
+        (["r", "X"], "Xbc def\nxyz", (0, 0)),
+        (["3", "r", "-"], "--- def\nxyz", (0, 2)),
+        (["$", "2", "r", "-"], "abc def\nxyz", (0, 6)),  # too few characters: no-op
+        (["l", "r", "enter"], "a\nc def\nxyz", (1, 0)),
+        (["r", "escape", "x"], "bc def\nxyz", (0, 0)),  # escape cancels a pending r
+        (["v", "e", "r", "*"], "*** def\nxyz", (0, 0)),
+        (["v", "j", "r", "."], ".......\n.yz", (0, 0)),  # line breaks survive
+        (["V", "r", "#"], "#######\nxyz", (0, 0)),
+        (["v", "r", "enter", "x"], "bc def\nxyz", (0, 0)),  # visual r<enter> is not supported: cancels r
+    ],
+)
+def test_r_replaces_characters(keys, text, pos):
+    v, _ = rep_run(keys)
+    assert (v.text, (v.row, v.col)) == (text, pos)
+    assert not v.replacing and v.visual is None
+
+
+def test_r_is_one_undo_step():
+    v, _ = rep_run(["3", "r", "-", "u"])
+    assert v.text == "abc def\nxyz"
+    v, _ = rep_run(["v", "e", "r", "*", "u"])
+    assert v.text == "abc def\nxyz"
